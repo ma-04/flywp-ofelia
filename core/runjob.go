@@ -33,6 +33,7 @@ type RunJob struct {
 	Network     string
 	Hostname    string
 	Container   string
+	Entrypoint  *string
 	Volume      []string
 	VolumesFrom []string `gcfg:"volumes-from" mapstructure:"volumes-from,"`
 	Environment []string
@@ -57,7 +58,7 @@ func (j *RunJob) Run(ctx *Context) error {
 			// try pulling image first
 			if pull {
 				if pullError = j.pullImage(); pullError == nil {
-					ctx.Log("Pulled image " + j.Image)
+					ctx.Logger.Debug("Pulled new image", "image", j.Image, "pull", pull)
 					return nil
 				}
 			}
@@ -66,14 +67,14 @@ func (j *RunJob) Run(ctx *Context) error {
 			// try to find image locally first
 			searchErr := j.searchLocalImage()
 			if searchErr == nil {
-				ctx.Log("Found locally image " + j.Image)
+				ctx.Logger.Debug("Found image locally", "image", j.Image, "pull", pull)
 				return nil
 			}
 
 			// if couldn't find image locally, still try to pull
 			if !pull && searchErr == ErrLocalImageNotFound {
 				if pullError = j.pullImage(); pullError == nil {
-					ctx.Log("Pulled image " + j.Image)
+					ctx.Logger.Debug("Pulled new image", "image", j.Image, "pull", pull)
 					return nil
 				}
 			}
@@ -163,18 +164,22 @@ func (j *RunJob) pullImage() error {
 }
 
 func (j *RunJob) buildContainer() (*docker.Container, error) {
+	config := &docker.Config{
+		Image:        j.Image,
+		AttachStdin:  false,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          j.TTY,
+		Cmd:          args.GetArgs(j.Command),
+		User:         j.User,
+		Env:          j.Environment,
+		Hostname:     j.Hostname,
+	}
+	if j.Entrypoint != nil {
+		config.Entrypoint = args.GetArgs(*j.Entrypoint)
+	}
 	c, err := j.Client.CreateContainer(docker.CreateContainerOptions{
-		Config: &docker.Config{
-			Image:        j.Image,
-			AttachStdin:  false,
-			AttachStdout: true,
-			AttachStderr: true,
-			Tty:          j.TTY,
-			Cmd:          args.GetArgs(j.Command),
-			User:         j.User,
-			Env:          j.Environment,
-			Hostname:     j.Hostname,
-		},
+		Config:           config,
 		NetworkingConfig: &docker.NetworkingConfig{},
 		HostConfig: &docker.HostConfig{
 			Binds:       j.Volume,
